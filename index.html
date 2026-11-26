@@ -462,7 +462,7 @@ function viewYear(){
     +'<tfoot><tr><td>Mois renseignés</td><td>'+money(T.inc)+'</td><td>'+money(T.fx)+'</td><td>'+money(T.vr)+'</td><td>'+money(T.reste)+'</td><td></td></tr></tfoot></table></div>';
   h+='<p class="note">Les totaux ne comptent que les mois où tu as saisi un revenu. Le solde enchaîne les restes à partir du solde de départ.</p>';
   var navs='<div style="display:flex;gap:8px"><button class="btn ghost small" data-act="yearPrev">Année précédente</button><button class="btn ghost small" data-act="yearNext">Année suivante</button></div>';
-  return h+navs+'<section class="card"><h2>Export</h2><p class="note" style="margin:0 0 10px">Télécharge un classeur Excel à la même forme que ton tableau : Récap, Dépenses variables, Charges fixes avec une colonne par mois, et Par catégorie, avec toutes les formules.</p><button class="btn block" data-act="exportXlsx">Exporter vers Excel (.xlsx)</button></section>';
+  return h+navs+'<section class="card"><h2>Export</h2><p class="note" style="margin:0 0 10px">Télécharge un classeur Excel à la même forme que ton tableau : Récap, Dépenses variables, Charges fixes avec une colonne par mois, et Par catégorie, avec toutes les formules.</p><button class="btn block" data-act="exportXlsx">Exporter vers Excel (.xlsx)</button><button class="btn block ghost" style="margin-top:8px" data-act="pickXlsx">Importer un fichier Excel</button><p class="note" style="margin:8px 0 0">Nouveau téléphone ? Exporte ici, puis importe le fichier sur l\'autre appareil pour retrouver tes données.</p></section>';
 }
 
 function render(){
@@ -554,7 +554,7 @@ function sheetSettings(){
     +'<div class="field"><label for="f-bal">Solde du compte au départ (€)</label><input id="f-bal" type="text" inputmode="decimal" placeholder="0,00" value="'+inputVal(state.startBalance||"")+'"></div>'
     +'<p class="err" id="err"></p><button class="btn" data-act="saveSettings">Enregistrer les réglages</button>'
     +'<div class="field"><label for="f-json">Sauvegarde de mes données</label><textarea id="f-json" spellcheck="false">'+esc(json)+'</textarea></div>'
-    +'<div class="actions"><button class="btn" data-act="exportXlsx">Exporter vers Excel (.xlsx)</button><button class="btn ghost" data-act="copyJson">Copier la sauvegarde</button><button class="btn ghost" data-act="importJson">Remplacer mes données par ce texte</button><button class="btn ghost" data-act="closeSheet">Fermer</button></div>';
+    +'<div class="actions"><button class="btn" data-act="exportXlsx">Exporter vers Excel (.xlsx)</button><button class="btn ghost" data-act="pickXlsx">Importer un fichier Excel</button><button class="btn ghost" data-act="copyJson">Copier la sauvegarde</button><button class="btn ghost" data-act="importJson">Remplacer mes données par ce texte</button><button class="btn ghost" data-act="closeSheet">Fermer</button></div>';
   openSheet("Réglages",body,{});
 }
 
@@ -575,6 +575,13 @@ function A(act,el){
     case "settings": sheetSettings(); break;
     case "closeSheet": closeSheet(); break;
     case "exportXlsx": exportXlsx(); break;
+    case "pickXlsx": pickXlsx(); break;
+    case "confirmImportXlsx":{
+      if(!pendingImport) return;
+      state=pendingImport; pendingImport=null;
+      if(ui.month<state.startMonth||!ui.month) ui.month=state.startMonth;
+      closeSheet(); commit(); toast("Données importées depuis Excel.");
+      break; }
 
     case "saveExpense":{
       var a=num(val("f-amount")); var d=val("f-date"); var c=checkedCat();
@@ -695,6 +702,92 @@ async function exportXlsx(){
     if(c==="host_unavailable") toast("Ce téléphone ne peut pas enregistrer de fichier ici. Ouvre l'appli dans un navigateur ou sur un ordinateur.");
     else toast("L'export a échoué. Réessaie dans un instant.");
   }
+}
+/* ---------- Import Excel (relit un classeur exporté par l'appli) ---------- */
+var pendingImport=null;
+function xlVal(c){
+  var v=c?c.value:null;
+  if(v==null) return null;
+  if(v instanceof Date) return v;
+  if(typeof v==="object"){
+    if(v.richText) return v.richText.map(function(t){return t.text;}).join("");
+    if("result" in v) return v.result==null?null:v.result;
+    if(v.text!=null) return v.text;
+    return null;
+  }
+  return v;
+}
+function xlDate(v){
+  if(v instanceof Date) return v.getUTCFullYear()+"-"+pad(v.getUTCMonth()+1)+"-"+pad(v.getUTCDate());
+  if(typeof v==="number"&&v>20000&&v<80000){ var d=new Date(Date.UTC(1899,11,30)+Math.round(v)*864e5); return d.getUTCFullYear()+"-"+pad(d.getUTCMonth()+1)+"-"+pad(d.getUTCDate()); }
+  var s=String(v==null?"":v).trim(), m;
+  if((m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/))) return m[3]+"-"+pad(+m[2])+"-"+pad(+m[1]);
+  if((m=s.match(/^(\d{4})-(\d{2})-(\d{2})/))) return m[1]+"-"+m[2]+"-"+m[3];
+  return null;
+}
+function xlText(v){ return v==null?"":String(v).trim(); }
+function parseWorkbook(wb){
+  var r=wb.getWorksheet("Récap"), d=wb.getWorksheet("Dépenses variables"), f=wb.getWorksheet("Charges fixes");
+  if(!r&&!d&&!f) throw new Error("format");
+  var start=null, bal=0;
+  if(r){
+    var sd=xlDate(xlVal(r.getCell("B1"))); if(sd) start=sd.slice(0,7);
+    var b=xlVal(r.getCell("B2")); if(typeof b==="number"&&isFinite(b)) bal=b;
+  }
+  var expenses=[];
+  if(d){
+    for(var i=4;i<=d.rowCount;i++){
+      var dt=xlDate(xlVal(d.getCell(i,1)));
+      var am=xlVal(d.getCell(i,4)); if(typeof am!=="number") am=num(am);
+      if(!dt||!isFinite(am)) continue;
+      expenses.push({id:uid(),date:dt,label:xlText(xlVal(d.getCell(i,2))),cat:xlText(xlVal(d.getCell(i,3)))||"Divers",amount:am,note:xlText(xlVal(d.getCell(i,5)))});
+    }
+  }
+  if(!start){
+    start=expenses.length?expenses.map(function(e){return e.date.slice(0,7);}).sort()[0]:curKey();
+  }
+  var income={};
+  if(r){
+    for(var n=0;n<12;n++){ var iv=xlVal(r.getCell(6+n,2)); if(typeof iv==="number"&&isFinite(iv)) income[addM(start,n)]=iv; }
+  }
+  var fixed=[];
+  if(f){
+    for(var j=4;j<=f.rowCount;j++){
+      var label=xlText(xlVal(f.getCell(j,1))); if(!label) continue;
+      var day=xlVal(f.getCell(j,4)); day=(typeof day==="number"&&day>=1&&day<=31)?Math.round(day):null;
+      var amounts={};
+      for(var m=0;m<12;m++){
+        var c=f.getCell(j,8+m);
+        if(typeof c.value==="number"&&isFinite(c.value)) amounts[addM(start,m)]=c.value;
+      }
+      fixed.push({id:uid(),label:label,cat:xlText(xlVal(f.getCell(j,2)))||"Logement",day:day,amounts:amounts});
+    }
+  }
+  var s=normalize({rev:Date.now(),imp:(typeof IMPORT_V!=="undefined"?IMPORT_V:0),startMonth:start,startBalance:bal,income:income,fixed:fixed,expenses:expenses});
+  return s;
+}
+async function importXlsx(file){
+  if(typeof ExcelJS==="undefined"){ toast("Le module Excel n'a pas pu se charger. Vérifie ta connexion et réessaie."); return; }
+  try{
+    var wb=new ExcelJS.Workbook();
+    await wb.xlsx.load(await file.arrayBuffer());
+    var s=parseWorkbook(wb);
+    if(!s.fixed.length&&!s.expenses.length&&!Object.keys(s.income).length) throw new Error("vide");
+    pendingImport=s;
+    var nInc=Object.keys(s.income).length;
+    var body='<p style="margin:0 0 10px">Fichier lu : <b>'+esc(file.name)+'</b></p>'
+      +'<div class="card" style="margin:0 0 12px"><div class="note" style="line-height:1.7">À partir de '+esc(monthLabel(s.startMonth))+'<br>'+s.expenses.length+' dépense'+(s.expenses.length>1?'s':'')+' variable'+(s.expenses.length>1?'s':'')+'<br>'+s.fixed.length+' charge'+(s.fixed.length>1?'s':'')+' fixe'+(s.fixed.length>1?'s':'')+'<br>'+nInc+' mois avec un revenu</div></div>'
+      +'<p class="note">Cela <b>remplace</b> les données actuellement dans l\'appli. Si tu as des choses récentes ici, exporte-les d\'abord.</p>'
+      +'<div class="actions"><button class="btn" data-act="confirmImportXlsx">Remplacer mes données</button><button class="btn ghost" data-act="closeSheet">Annuler</button></div>';
+    openSheet("Importer ce fichier ?",body,{});
+  }catch(e){
+    toast("Ce fichier n'a pas pu être lu. Choisis un classeur .xlsx exporté depuis l'appli.");
+  }
+}
+function pickXlsx(){
+  var inp=document.createElement("input"); inp.type="file"; inp.accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"; inp.style.display="none";
+  inp.addEventListener("change",function(){ var fl=inp.files&&inp.files[0]; inp.remove(); if(fl) importXlsx(fl); });
+  document.body.appendChild(inp); inp.click();
 }
 function buildWorkbook(){
   var MONEY='#,##0.00\\ "€"', MONEY0='#,##0\\ "€";-#,##0\\ "€";"–"', MON='mmmm yyyy', MSHORT='mmm yy';

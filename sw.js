@@ -1,5 +1,5 @@
 /* Mes comptes : fonctionne hors connexion. Le cache se met à jour à chaque ouverture en ligne. */
-var CACHE = "mes-comptes-v1";
+var CACHE = "mes-comptes-v2";
 var SHELL = ["./","index.html","manifest.webmanifest","vendor/exceljs.min.js","icons/icon-192.png","icons/icon-512.png","icons/apple-touch-icon.png"];
 self.addEventListener("install", function(e){
   e.waitUntil(caches.open(CACHE).then(function(c){ return c.addAll(SHELL); }).then(function(){ return self.skipWaiting(); }));

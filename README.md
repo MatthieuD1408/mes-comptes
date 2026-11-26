@@ -13,7 +13,7 @@ Une fois installée, l'appli s'ouvre en plein écran et fonctionne sans connexio
 
 ## Sauvegarde
 
-Réglages (engrenage) : copier le texte de sauvegarde pour le garder, ou le coller pour restaurer. L'onglet Année permet d'exporter un classeur Excel.
+Réglages (engrenage) : copier le texte de sauvegarde pour le garder, ou le coller pour restaurer. L'onglet Année permet d'exporter un classeur Excel, et de le réimporter (Importer un fichier Excel) pour retrouver ses données, par exemple sur un nouveau téléphone. L'import remplace les données de l'appli.
 
 ## Fichiers
 
